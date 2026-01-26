@@ -47,6 +47,17 @@ cleanup() {
 }
 trap cleanup EXIT
 
+append_exit_trap() {
+    local new_cmd="$1"
+    local existing=""
+    existing=$(trap -p EXIT | sed -E "s/^trap -- '(.*)' EXIT$/\\1/")
+    if [[ -n "$existing" ]]; then
+        trap "${new_cmd}; ${existing}" EXIT
+    else
+        trap "$new_cmd" EXIT
+    fi
+}
+
 # Acquire lock to prevent concurrent runs
 acquire_lock() {
     if [[ -f "$LOCK_FILE" ]]; then
@@ -82,6 +93,26 @@ NC='\033[0m'
 BOX_TL='╭' BOX_TR='╮' BOX_BL='╰' BOX_BR='╯'
 BOX_H='─' BOX_V='│'
 
+# Banner box drawing characters (double line)
+BANNER_TL='╔' BANNER_TR='╗' BANNER_BL='╚' BANNER_BR='╝'
+BANNER_H='═' BANNER_V='║'
+
+# Icons and glyphs
+ICON_INFO='ℹ'
+ICON_WARN='⚠'
+ICON_ERROR='✖'
+ICON_STEP='▸'
+ICON_SUCCESS='✔'
+ICON_SKIP='○'
+ICON_DRYRUN='📋'
+ICON_SPARKLES='✨'
+ICON_BANNER='🔄'
+ICON_ZAP='⚡'
+
+BULLET='•'
+ARROW='→'
+EM_DASH='—'
+
 # -----------------------------------------------------------------------------
 # Logging with Style
 # -----------------------------------------------------------------------------
@@ -93,6 +124,8 @@ STATUS_JSON="false"
 LOG_FILE=""
 HAS_JQ="false"
 HAS_PYTHON="false"
+NO_COLOR="false"
+NO_UNICODE="false"
 
 log_to_file() {
     if [[ -n "$LOG_FILE" ]]; then
@@ -100,13 +133,64 @@ log_to_file() {
     fi
 }
 
-log_info()    { [[ "$QUIET" == "true" ]] || echo -e "${CYAN}ℹ${NC}  $1"; log_to_file "INFO: $1"; }
-log_warn()    { echo -e "${YELLOW}⚠${NC}  $1"; log_to_file "WARN: $1"; }  # Always show warnings
-log_error()   { echo -e "${RED}✖${NC}  $1" >&2; log_to_file "ERROR: $1"; }  # Always show errors
-log_step()    { [[ "$QUIET" == "true" ]] || echo -e "${BLUE}▸${NC}  $1"; log_to_file "STEP: $1"; }
-log_success() { [[ "$QUIET" == "true" ]] || echo -e "${GREEN}✔${NC}  $1"; log_to_file "SUCCESS: $1"; }
-log_skip()    { [[ "$QUIET" == "true" ]] || echo -e "${DIM}○${NC}  $1"; log_to_file "SKIP: $1"; }
+log_info()    { [[ "$QUIET" == "true" ]] || echo -e "${CYAN}${ICON_INFO}${NC}  $1"; log_to_file "INFO: $1"; }
+log_warn()    { echo -e "${YELLOW}${ICON_WARN}${NC}  $1"; log_to_file "WARN: $1"; }  # Always show warnings
+log_error()   { echo -e "${RED}${ICON_ERROR}${NC}  $1" >&2; log_to_file "ERROR: $1"; }  # Always show errors
+log_step()    { [[ "$QUIET" == "true" ]] || echo -e "${BLUE}${ICON_STEP}${NC}  $1"; log_to_file "STEP: $1"; }
+log_success() { [[ "$QUIET" == "true" ]] || echo -e "${GREEN}${ICON_SUCCESS}${NC}  $1"; log_to_file "SUCCESS: $1"; }
+log_skip()    { [[ "$QUIET" == "true" ]] || echo -e "${DIM}${ICON_SKIP}${NC}  $1"; log_to_file "SKIP: $1"; }
 log_verbose() { [[ "$VERBOSE" == "true" ]] && echo -e "${DIM}   $1${NC}"; log_to_file "VERBOSE: $1"; }
+
+# -----------------------------------------------------------------------------
+# Output mode helpers
+# -----------------------------------------------------------------------------
+set_box_single() {
+    BOX_TL='┌' BOX_TR='┐' BOX_BL='└' BOX_BR='┘'
+    BOX_H='─' BOX_V='│'
+    BANNER_TL='┌' BANNER_TR='┐' BANNER_BL='└' BANNER_BR='┘'
+    BANNER_H='─' BANNER_V='│'
+}
+
+set_box_ascii() {
+    BOX_TL='+' BOX_TR='+' BOX_BL='+' BOX_BR='+'
+    BOX_H='-' BOX_V='|'
+    BANNER_TL='+' BANNER_TR='+' BANNER_BL='+' BANNER_BR='+'
+    BANNER_H='-' BANNER_V='|'
+}
+
+apply_no_color() {
+    NO_COLOR="true"
+    RED='' GREEN='' YELLOW='' BLUE='' CYAN='' MAGENTA='' WHITE='' BOLD='' DIM='' ITALIC='' UNDERLINE='' NC=''
+    if [[ "$NO_UNICODE" == "true" ]]; then
+        set_box_ascii
+    else
+        set_box_single
+    fi
+}
+
+apply_no_unicode() {
+    NO_UNICODE="true"
+    ICON_INFO='i'
+    ICON_WARN='!'
+    ICON_ERROR='x'
+    ICON_STEP='>'
+    ICON_SUCCESS='+'
+    ICON_SKIP='.'
+    ICON_DRYRUN='DRY'
+    ICON_SPARKLES='OK'
+    ICON_BANNER='*'
+    ICON_ZAP='!'
+    BULLET='*'
+    ARROW='->'
+    EM_DASH='-'
+    set_box_ascii
+}
+
+repeat_char() {
+    local ch="$1"
+    local count="$2"
+    printf '%*s' "$count" '' | tr ' ' "$ch"
+}
 
 # -----------------------------------------------------------------------------
 # Message Templates
@@ -133,14 +217,16 @@ TEMPLATE_DEFAULT="Context was just compacted. Please reread AGENTS.md to refresh
 # -----------------------------------------------------------------------------
 print_banner() {
     [[ "$QUIET" == "true" ]] && return
+    local banner_line
+    banner_line=$(repeat_char "$BANNER_H" 62)
     echo ""
-    echo -e "${CYAN}${BOLD}╔══════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}${BOLD}║${NC}                                                              ${CYAN}${BOLD}║${NC}"
-    echo -e "${CYAN}${BOLD}║${NC}  🔄 ${WHITE}${BOLD}post-compact-reminder${NC} ${DIM}v${VERSION}${NC}                             ${CYAN}${BOLD}║${NC}"
-    echo -e "${CYAN}${BOLD}║${NC}                                                              ${CYAN}${BOLD}║${NC}"
-    echo -e "${CYAN}${BOLD}║${NC} ${DIM}${ITALIC}\"We stop your bot from going on a post-compaction rampage.\"${NC} ${CYAN}${BOLD}║${NC}"
-    echo -e "${CYAN}${BOLD}║${NC}                                                              ${CYAN}${BOLD}║${NC}"
-    echo -e "${CYAN}${BOLD}╚══════════════════════════════════════════════════════════════╝${NC}"
+    echo -e "${CYAN}${BOLD}${BANNER_TL}${banner_line}${BANNER_TR}${NC}"
+    echo -e "${CYAN}${BOLD}${BANNER_V}${NC}                                                              ${CYAN}${BOLD}${BANNER_V}${NC}"
+    echo -e "${CYAN}${BOLD}${BANNER_V}${NC}  ${ICON_BANNER} ${WHITE}${BOLD}post-compact-reminder${NC} ${DIM}v${VERSION}${NC}                             ${CYAN}${BOLD}${BANNER_V}${NC}"
+    echo -e "${CYAN}${BOLD}${BANNER_V}${NC}                                                              ${CYAN}${BOLD}${BANNER_V}${NC}"
+    echo -e "${CYAN}${BOLD}${BANNER_V}${NC} ${DIM}${ITALIC}\"We stop your bot from going on a post-compaction rampage.\"${NC} ${CYAN}${BOLD}${BANNER_V}${NC}"
+    echo -e "${CYAN}${BOLD}${BANNER_V}${NC}                                                              ${CYAN}${BOLD}${BANNER_V}${NC}"
+    echo -e "${CYAN}${BOLD}${BANNER_BL}${banner_line}${BANNER_BR}${NC}"
     echo ""
 }
 
@@ -358,6 +444,15 @@ check_dependencies() {
     return 0
 }
 
+require_python_for_settings() {
+    local dry_run="$1"
+    if [[ "$dry_run" != "true" && "$HAS_PYTHON" != "true" ]]; then
+        log_error "python3 not found; cannot update settings.json. Aborting before writing files."
+        return 1
+    fi
+    return 0
+}
+
 # -----------------------------------------------------------------------------
 # Version management
 # -----------------------------------------------------------------------------
@@ -377,11 +472,8 @@ render_hook_script() {
     local message="$1"
     local note="${2:-}"
     local note_line=""
-
-    # Escape backticks and dollar signs in the message to prevent expansion
-    # during heredoc generation or execution
-    message="${message//\`/\\\`}"
-    message="${message//\$/\\\$}"
+    local message_quoted
+    message_quoted=$(printf '%q' "$message")
 
     if [[ -n "$note" ]]; then
         # Sanitize note (remove newlines)
@@ -401,6 +493,8 @@ ${note_line}
 
 set -e
 
+MESSAGE=${message_quoted}
+
 # Read JSON input from Claude Code
 INPUT=\$(cat)
 SOURCE=""
@@ -419,11 +513,9 @@ fi
 
 # Double-check source (belt and suspenders with the matcher)
 if [[ "\$SOURCE" == "compact" ]]; then
-    cat <<'EOF'
-<post-compact-reminder>
-${message}
-</post-compact-reminder>
-EOF
+    printf '%s\n' "<post-compact-reminder>"
+    printf '%s\n' "\$MESSAGE"
+    printf '%s\n' "</post-compact-reminder>"
 fi
 
 # SessionStart hooks don't block, just exit 0
@@ -515,45 +607,83 @@ try:
     else:
         settings = {}
 
+    original = json.dumps(settings, sort_keys=True)
+
     # Ensure hooks structure exists
     if 'hooks' not in settings:
         settings['hooks'] = {}
 
-    # Check if SessionStart already has our hook
     session_start = settings['hooks'].get('SessionStart', [])
-    already_exists = False
+    new_session_start = []
+    found_existing = False
+    changed = False
+    hook_inserted = False
+    first_compact_idx = None
 
     for hook_group in session_start:
-        for hook in hook_group.get('hooks', []):
-            if 'post-compact-reminder' in hook.get('command', ''):
-                already_exists = True
-                break
+        hooks = hook_group.get('hooks', [])
+        new_hooks = []
+        group_is_compact = hook_group.get('matcher') == 'compact'
 
-    if not already_exists:
-        # Add our hook with matcher
-        session_start.append({
-            "matcher": "compact",
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": hook_path
-                }
-            ]
-        })
-        settings['hooks']['SessionStart'] = session_start
+        for hook in hooks:
+            cmd = hook.get('command', '')
+            if 'post-compact-reminder' in cmd:
+                found_existing = True
+                if group_is_compact and not hook_inserted:
+                    new_hook = dict(hook)
+                    if new_hook.get('command') != hook_path:
+                        new_hook['command'] = hook_path
+                        changed = True
+                    new_hooks.append(new_hook)
+                    hook_inserted = True
+                else:
+                    changed = True
+                    continue
+            else:
+                new_hooks.append(hook)
 
-        # Atomic write: write to temp file then rename
-        dir_name = os.path.dirname(settings_file) or '.'
-        temp_path = None
-        with tempfile.NamedTemporaryFile(mode='w', dir=dir_name, delete=False, suffix='.tmp') as tf:
-            json.dump(settings, tf, indent=2)
-            tf.write('\n')
-            temp_path = tf.name
+        if new_hooks:
+            new_group = dict(hook_group)
+            new_group['hooks'] = new_hooks
+            new_session_start.append(new_group)
+            if group_is_compact and first_compact_idx is None:
+                first_compact_idx = len(new_session_start) - 1
 
-        shutil.move(temp_path, settings_file)
-        print('added')
-    else:
+    if not hook_inserted:
+        if first_compact_idx is not None:
+            new_session_start[first_compact_idx].setdefault('hooks', []).append({
+                "type": "command",
+                "command": hook_path
+            })
+        else:
+            new_session_start.append({
+                "matcher": "compact",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": hook_path
+                    }
+                ]
+            })
+        changed = True
+
+    settings['hooks']['SessionStart'] = new_session_start
+
+    updated = json.dumps(settings, sort_keys=True)
+    if not changed or original == updated:
         print('exists')
+        sys.exit(0)
+
+    # Atomic write: write to temp file then rename
+    dir_name = os.path.dirname(settings_file) or '.'
+    temp_path = None
+    with tempfile.NamedTemporaryFile(mode='w', dir=dir_name, delete=False, suffix='.tmp') as tf:
+        json.dump(settings, tf, indent=2)
+        tf.write('\n')
+        temp_path = tf.name
+
+    shutil.move(temp_path, settings_file)
+    print('updated' if found_existing else 'added')
 
 except Exception as e:
     if 'temp_path' in locals() and temp_path and os.path.exists(temp_path):
@@ -759,52 +889,52 @@ do_status() {
         local installed_version
         installed_version=$(get_installed_version "$script_path")
         if [[ -x "$script_path" ]]; then
-            echo -e "    ${GREEN}✔${NC} Installed at ${WHITE}$script_path${NC}"
-            echo -e "    ${GREEN}✔${NC} Executable: yes"
-            echo -e "    ${CYAN}ℹ${NC} Version: ${WHITE}${installed_version:-unknown}${NC}"
+            echo -e "    ${GREEN}${ICON_SUCCESS}${NC} Installed at ${WHITE}$script_path${NC}"
+            echo -e "    ${GREEN}${ICON_SUCCESS}${NC} Executable: yes"
+            echo -e "    ${CYAN}${ICON_INFO}${NC} Version: ${WHITE}${installed_version:-unknown}${NC}"
             if [[ "$installed_version" != "$VERSION" && -n "$installed_version" ]]; then
-                echo -e "    ${YELLOW}⚠${NC} Update available: ${installed_version} → ${VERSION}"
+                echo -e "    ${YELLOW}${ICON_WARN}${NC} Update available: ${installed_version} ${ARROW} ${VERSION}"
             fi
         else
-            echo -e "    ${YELLOW}⚠${NC} File exists but not executable"
+            echo -e "    ${YELLOW}${ICON_WARN}${NC} File exists but not executable"
         fi
     else
-        echo -e "    ${RED}✖${NC} Not installed at $script_path"
+        echo -e "    ${RED}${ICON_ERROR}${NC} Not installed at $script_path"
     fi
     echo ""
 
     # Check settings
     echo -e "  ${CYAN}${BOLD}Settings Configuration:${NC}"
     if [[ -f "$settings_file" ]]; then
-        echo -e "    ${GREEN}✔${NC} Settings file exists at ${WHITE}$settings_file${NC}"
+        echo -e "    ${GREEN}${ICON_SUCCESS}${NC} Settings file exists at ${WHITE}$settings_file${NC}"
         if [[ "$HAS_PYTHON" == "true" ]]; then
             if check_settings_has_hook "$settings_file"; then
-                echo -e "    ${GREEN}✔${NC} Hook configured in settings.json"
+                echo -e "    ${GREEN}${ICON_SUCCESS}${NC} Hook configured in settings.json"
             else
-                echo -e "    ${RED}✖${NC} Hook NOT configured in settings.json"
+                echo -e "    ${RED}${ICON_ERROR}${NC} Hook NOT configured in settings.json"
             fi
         else
-            echo -e "    ${YELLOW}⚠${NC} Cannot verify hook config (python3 not available)"
+            echo -e "    ${YELLOW}${ICON_WARN}${NC} Cannot verify hook config (python3 not available)"
         fi
         if [[ -f "${settings_file}.bak" ]]; then
-            echo -e "    ${CYAN}ℹ${NC} Backup exists: ${settings_file}.bak"
+            echo -e "    ${CYAN}${ICON_INFO}${NC} Backup exists: ${settings_file}.bak"
         fi
     else
-        echo -e "    ${RED}✖${NC} Settings file not found"
+        echo -e "    ${RED}${ICON_ERROR}${NC} Settings file not found"
     fi
     echo ""
 
     # Check dependencies
     echo -e "  ${CYAN}${BOLD}Dependencies:${NC}"
     if [[ "$HAS_JQ" == "true" ]]; then
-        echo -e "    ${GREEN}✔${NC} jq: $(jq --version 2>/dev/null || echo 'installed')"
+        echo -e "    ${GREEN}${ICON_SUCCESS}${NC} jq: $(jq --version 2>/dev/null || echo 'installed')"
     else
-        echo -e "    ${RED}✖${NC} jq: not installed"
+        echo -e "    ${RED}${ICON_ERROR}${NC} jq: not installed"
     fi
     if [[ "$HAS_PYTHON" == "true" ]]; then
-        echo -e "    ${GREEN}✔${NC} python3: $(python3 --version 2>/dev/null || echo 'installed')"
+        echo -e "    ${GREEN}${ICON_SUCCESS}${NC} python3: $(python3 --version 2>/dev/null || echo 'installed')"
     else
-        echo -e "    ${RED}✖${NC} python3: not installed"
+        echo -e "    ${RED}${ICON_ERROR}${NC} python3: not installed"
     fi
     echo ""
 
@@ -812,12 +942,161 @@ do_status() {
     if [[ -x "$script_path" ]]; then
         echo -e "  ${CYAN}${BOLD}Hook Test:${NC}"
         if test_hook "$script_path"; then
-            echo -e "    ${GREEN}✔${NC} Hook responds correctly to compact events"
+            echo -e "    ${GREEN}${ICON_SUCCESS}${NC} Hook responds correctly to compact events"
         else
-            echo -e "    ${RED}✖${NC} Hook test failed"
+            echo -e "    ${RED}${ICON_ERROR}${NC} Hook test failed"
         fi
         echo ""
     fi
+}
+
+# -----------------------------------------------------------------------------
+# Doctor (self-test)
+# -----------------------------------------------------------------------------
+do_doctor() {
+    local hook_dir="$1"
+    local settings_dir="$2"
+
+    local script_path="${hook_dir}/${SCRIPT_NAME}"
+    local settings_file="${settings_dir}/settings.json"
+
+    detect_dependencies
+
+    local script_exists="false"
+    local script_executable="false"
+    local settings_exists="false"
+    local hook_configured_json="null"
+    local compact_test_ran="false"
+    local compact_test_passed_json="null"
+    local startup_test_ran="false"
+    local startup_test_passed_json="null"
+
+    if [[ -f "$script_path" ]]; then
+        script_exists="true"
+        if [[ -x "$script_path" ]]; then
+            script_executable="true"
+        fi
+    fi
+
+    if [[ -f "$settings_file" ]]; then
+        settings_exists="true"
+        if [[ "$HAS_PYTHON" == "true" ]]; then
+            if check_settings_has_hook "$settings_file"; then
+                hook_configured_json="true"
+            else
+                hook_configured_json="false"
+            fi
+        fi
+    fi
+
+    if [[ -x "$script_path" ]]; then
+        compact_test_ran="true"
+        if test_hook "$script_path"; then
+            compact_test_passed_json="true"
+        else
+            compact_test_passed_json="false"
+        fi
+
+        startup_test_ran="true"
+        local startup_output
+        startup_output=$(echo '{"session_id": "doctor", "source": "startup"}' | \
+            "$script_path" 2>/dev/null || true)
+        if [[ -z "$startup_output" ]]; then
+            startup_test_passed_json="true"
+        else
+            startup_test_passed_json="false"
+        fi
+    fi
+
+    if [[ "$STATUS_JSON" == "true" ]]; then
+        printf '{\n'
+        printf '  "paths": {"script": "%s", "settings": "%s"},\n' \
+            "$(json_escape "$script_path")" "$(json_escape "$settings_file")"
+        printf '  "hook_script": {"exists": %s, "executable": %s},\n' \
+            "$script_exists" "$script_executable"
+        printf '  "settings": {"exists": %s, "hook_configured": %s},\n' \
+            "$settings_exists" "$hook_configured_json"
+        printf '  "dependencies": {"jq": %s, "python3": %s},\n' \
+            "$HAS_JQ" "$HAS_PYTHON"
+        printf '  "tests": {"compact": {"ran": %s, "passed": %s}, "startup": {"ran": %s, "passed": %s}}\n' \
+            "$compact_test_ran" "$compact_test_passed_json" "$startup_test_ran" "$startup_test_passed_json"
+        printf '}\n'
+    else
+        print_banner
+
+        echo -e "${WHITE}${BOLD}${UNDERLINE}Doctor Results${NC}"
+        echo ""
+
+        echo -e "  ${CYAN}${BOLD}Hook Script:${NC}"
+        if [[ "$script_exists" == "true" ]]; then
+            if [[ "$script_executable" == "true" ]]; then
+                echo -e "    ${GREEN}${ICON_SUCCESS}${NC} Installed and executable: ${WHITE}$script_path${NC}"
+            else
+                echo -e "    ${YELLOW}${ICON_WARN}${NC} Installed but not executable: ${WHITE}$script_path${NC}"
+            fi
+        else
+            echo -e "    ${RED}${ICON_ERROR}${NC} Missing: ${WHITE}$script_path${NC}"
+        fi
+        echo ""
+
+        echo -e "  ${CYAN}${BOLD}Settings:${NC}"
+        if [[ "$settings_exists" == "true" ]]; then
+            echo -e "    ${GREEN}${ICON_SUCCESS}${NC} Settings file exists: ${WHITE}$settings_file${NC}"
+            if [[ "$HAS_PYTHON" == "true" ]]; then
+                if [[ "$hook_configured_json" == "true" ]]; then
+                    echo -e "    ${GREEN}${ICON_SUCCESS}${NC} Hook configured in settings.json"
+                else
+                    echo -e "    ${RED}${ICON_ERROR}${NC} Hook NOT configured in settings.json"
+                fi
+            else
+                echo -e "    ${YELLOW}${ICON_WARN}${NC} Cannot verify hook config (python3 not available)"
+            fi
+        else
+            echo -e "    ${RED}${ICON_ERROR}${NC} Settings file not found"
+        fi
+        echo ""
+
+        echo -e "  ${CYAN}${BOLD}Tests:${NC}"
+        if [[ "$compact_test_ran" == "true" ]]; then
+            if [[ "$compact_test_passed_json" == "true" ]]; then
+                echo -e "    ${GREEN}${ICON_SUCCESS}${NC} Compact event triggers reminder"
+            else
+                echo -e "    ${RED}${ICON_ERROR}${NC} Compact event test failed"
+            fi
+        else
+            echo -e "    ${YELLOW}${ICON_WARN}${NC} Compact event test skipped (hook not executable)"
+        fi
+
+        if [[ "$startup_test_ran" == "true" ]]; then
+            if [[ "$startup_test_passed_json" == "true" ]]; then
+                echo -e "    ${GREEN}${ICON_SUCCESS}${NC} Startup event produces no output"
+            else
+                echo -e "    ${RED}${ICON_ERROR}${NC} Startup event produced unexpected output"
+            fi
+        else
+            echo -e "    ${YELLOW}${ICON_WARN}${NC} Startup event test skipped (hook not executable)"
+        fi
+        echo ""
+    fi
+
+    local ok="true"
+    if [[ "$script_exists" != "true" || "$script_executable" != "true" ]]; then
+        ok="false"
+    fi
+    if [[ "$settings_exists" != "true" ]]; then
+        ok="false"
+    fi
+    if [[ "$hook_configured_json" == "false" ]]; then
+        ok="false"
+    fi
+    if [[ "$compact_test_passed_json" == "false" || "$startup_test_passed_json" == "false" ]]; then
+        ok="false"
+    fi
+
+    if [[ "$ok" == "true" ]]; then
+        return 0
+    fi
+    return 1
 }
 
 # -----------------------------------------------------------------------------
@@ -998,6 +1277,10 @@ do_interactive() {
         return 0
     fi
 
+    if ! require_python_for_settings "$dry_run"; then
+        return 1
+    fi
+
     # Dry run check
     if [[ "$dry_run" == "true" ]]; then
         echo ""
@@ -1052,7 +1335,7 @@ do_interactive() {
     echo ""
     log_success "Interactive setup complete!"
     echo ""
-    echo -e "${YELLOW}⚡ Restart Claude Code for the hook to take effect.${NC}"
+    echo -e "${YELLOW}${ICON_ZAP} Restart Claude Code for the hook to take effect.${NC}"
 }
 
 # -----------------------------------------------------------------------------
@@ -1398,8 +1681,9 @@ do_update() {
     # Download the new version
     local tmp_script
     tmp_script=$(mktemp "${TMPDIR:-/tmp}/post-compact-reminder-update.XXXXXX")
-    # shellcheck disable=SC2064
-    trap "rm -f '$tmp_script'" EXIT
+    local tmp_rm
+    tmp_rm=$(printf "rm -f %q" "$tmp_script")
+    append_exit_trap "$tmp_rm"
 
     if [[ "$use_releases" == "true" ]]; then
         # Download from GitHub Releases
@@ -1589,6 +1873,78 @@ ZSH_COMPLETIONS
 }
 
 # -----------------------------------------------------------------------------
+# Repair / sync installation
+# -----------------------------------------------------------------------------
+do_repair() {
+    local hook_dir="$1"
+    local settings_dir="$2"
+    local dry_run="$3"
+
+    local script_path="${hook_dir}/${SCRIPT_NAME}"
+    local settings_file="${settings_dir}/settings.json"
+
+    if ! require_python_for_settings "$dry_run"; then
+        return 1
+    fi
+
+    log_info "Repairing installation..."
+    echo ""
+
+    if [[ "$dry_run" != "true" ]]; then
+        mkdir -p "$hook_dir"
+        mkdir -p "$settings_dir"
+    fi
+
+    if [[ -f "$script_path" ]]; then
+        if [[ "$dry_run" == "true" ]]; then
+            log_step "[dry-run] Would ensure $script_path is executable"
+        else
+            if [[ ! -x "$script_path" ]]; then
+                chmod +x "$script_path"
+                log_success "Fixed executable bit on $script_path"
+            else
+                log_skip "Hook script already present and executable"
+            fi
+        fi
+    else
+        if [[ "$dry_run" == "true" ]]; then
+            log_step "[dry-run] Would create $script_path"
+        else
+            log_step "Creating hook script..."
+            generate_hook_script > "$script_path"
+            chmod +x "$script_path"
+            log_success "Created $script_path"
+        fi
+    fi
+
+    log_step "Synchronizing settings.json..."
+    local hook_path_for_settings
+    local default_hook_dir="$HOME/.local/bin"
+    if [[ "$hook_dir" == "$default_hook_dir" ]]; then
+        hook_path_for_settings="\$HOME/.local/bin/${SCRIPT_NAME}"
+    else
+        hook_path_for_settings="$script_path"
+    fi
+    add_hook_to_settings "$settings_file" "$hook_path_for_settings" "$dry_run" > /dev/null
+
+    if [[ "$dry_run" != "true" ]]; then
+        log_success "Settings synchronized"
+    fi
+
+    if [[ "$dry_run" != "true" && -x "$script_path" ]]; then
+        log_step "Testing hook..."
+        if test_hook "$script_path"; then
+            log_success "Hook test passed"
+        else
+            log_warn "Hook test inconclusive"
+        fi
+    fi
+
+    echo ""
+    echo -e "${YELLOW}${ICON_ZAP} Restart Claude Code for changes to take effect.${NC}"
+}
+
+# -----------------------------------------------------------------------------
 # Install
 # -----------------------------------------------------------------------------
 do_install() {
@@ -1620,8 +1976,12 @@ do_install() {
                 fi
             fi
         else
-            log_info "Upgrading: ${installed_version} → ${VERSION}"
+            log_info "Upgrading: ${installed_version} ${ARROW} ${VERSION}"
         fi
+    fi
+
+    if ! require_python_for_settings "$dry_run"; then
+        return 1
     fi
 
     # Create directories
@@ -1658,6 +2018,8 @@ do_install() {
     if [[ "$dry_run" != "true" ]]; then
         if [[ "$result" == "added" ]]; then
             log_success "Added SessionStart hook with matcher: compact"
+        elif [[ "$result" == "updated" ]]; then
+            log_success "Updated SessionStart hook configuration"
         else
             log_skip "Hook already present in settings.json"
         fi
