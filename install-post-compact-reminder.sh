@@ -23,7 +23,7 @@ set -euo pipefail
 VERSION="1.1.0"
 SCRIPT_NAME="claude-post-compact-reminder"
 LOCK_FILE="/tmp/.post-compact-reminder-install.lock"
-GITHUB_RAW_URL="https://raw.githubusercontent.com/Dicklesworthstone/misc_coding_agent_tips_and_scripts/main/install-post-compact-reminder.sh"
+GITHUB_RAW_URL="https://raw.githubusercontent.com/Dicklesworthstone/post_compact_reminder/main/install-post-compact-reminder.sh"
 
 # Changelog (newest first)
 CHANGELOG_1_1_0="Added --status, --verbose, --restore, --diff, --interactive, --yes, --completions, --template, --show-template, --update, --changelog, --log flags. Enhanced customization support."
