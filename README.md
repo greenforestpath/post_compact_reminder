@@ -28,7 +28,7 @@ curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/post_compact_remi
 
 ## TL;DR
 
-**The Problem:** During long coding sessions, Claude Code compacts the conversation to stay within context limits. After compaction, Claude loses all memory of your project's AGENTS.md -- the file that defines your coding conventions, forbidden commands, architectural decisions, multi-agent coordination rules, and everything else that keeps Claude on the rails. The result: Claude starts freelancing, ignoring your rules, deleting files you told it never to delete, and generally going on a post-compaction rampage.
+**The Problem:** During long coding sessions, Claude Code compacts the conversation to stay within context limits. After compaction, Claude loses all memory of your project's AGENTS.md, the file that defines your coding conventions, forbidden commands, architectural decisions, multi-agent coordination rules, and everything else that keeps Claude on the rails. The result: Claude starts freelancing, ignoring your rules, deleting files you told it never to delete, and generally going on a post-compaction rampage.
 
 **The Solution:** A `SessionStart` hook that detects compaction events and injects a short XML reminder telling Claude to re-read AGENTS.md before doing anything else. One install, zero maintenance, works globally across all your projects.
 
@@ -37,9 +37,9 @@ curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/post_compact_remi
 | Feature | What It Does |
 |---------|--------------|
 | **Automatic detection** | Fires only after compaction (`source: "compact"`), not on normal startups |
-| **Zero-config** | Installs globally in `~/.local/bin` and `~/.claude/settings.json` -- works in every project |
+| **Zero-config** | Installs globally in `~/.local/bin` and `~/.claude/settings.json`; works in every project |
 | **Customizable messages** | 4 built-in templates (minimal, detailed, checklist, default) + custom messages |
-| **Non-blocking** | SessionStart hooks don't block Claude's workflow -- the reminder is injected instantly |
+| **Non-blocking** | SessionStart hooks don't block Claude's workflow; the reminder is injected instantly |
 | **Idempotent installer** | Safe to run repeatedly; detects existing installs, handles upgrades, creates backups |
 | **Self-updating** | `--update` pulls the latest installer from GitHub |
 
@@ -297,7 +297,7 @@ The installer adds (or merges) this into your existing settings:
 }
 ```
 
-The `matcher: "compact"` field is key -- it tells Claude Code to only invoke this hook when the SessionStart event's input contains `"compact"`, which only happens after context compaction. Normal startups, resumes, and `/clear` commands are ignored.
+The `matcher: "compact"` field tells Claude Code to only invoke this hook when the SessionStart event's input contains `"compact"`, which only happens after context compaction. Normal startups, resumes, and `/clear` commands are ignored.
 
 ---
 
@@ -406,7 +406,7 @@ Modify the text between `<post-compact-reminder>` and `</post-compact-reminder>`
 echo '{"source":"compact"}' | ~/.local/bin/claude-post-compact-reminder
 ```
 
-Changes to the hook script take effect immediately -- no restart needed. Only the initial installation requires restarting Claude Code.
+Changes to the hook script take effect immediately. Only the initial installation requires restarting Claude Code.
 
 ---
 
@@ -443,7 +443,7 @@ sudo dnf install jq
 sudo pacman -S jq
 ```
 
-Or re-run the installer -- it auto-installs missing dependencies.
+Or re-run the installer, which auto-installs missing dependencies.
 
 ### Settings.json is corrupted
 
@@ -496,7 +496,7 @@ The `<post-compact-reminder>` XML wrapper makes the reminder clearly identifiabl
 
 ### Does this work with Claude Code in VS Code / JetBrains?
 
-Yes. The `settings.json` hook configuration works across all Claude Code interfaces -- CLI, VS Code extension, and JetBrains plugin. They all share the same `~/.claude/settings.json`.
+Yes. The `settings.json` hook configuration works across all Claude Code interfaces: CLI, VS Code extension, and JetBrains plugin. They all share the same `~/.claude/settings.json`.
 
 ### Can I add more files to the reminder (not just AGENTS.md)?
 
@@ -529,14 +529,14 @@ Yes, but it's less useful. The default message tells Claude to re-read AGENTS.md
 
 ### What happens if I run the installer twice?
 
-Nothing bad. The installer is idempotent -- it detects existing installations, compares versions, and skips if already up to date. Use `--force` to reinstall anyway.
+Nothing bad. The installer is idempotent: it detects existing installations, compares versions, and skips if already up to date. Use `--force` to reinstall anyway.
 
 ---
 
 ## Related
 
-- [Claude Code Hooks Documentation](https://docs.anthropic.com/en/docs/claude-code/hooks) -- Official reference for all hook types
-- [DESTRUCTIVE_GIT_COMMAND_CLAUDE_HOOKS_SETUP.md](https://github.com/Dicklesworthstone/post_compact_reminder/blob/main/DESTRUCTIVE_GIT_COMMAND_CLAUDE_HOOKS_SETUP.md) -- Block dangerous `git` and `rm` commands with a PreToolUse hook
+- [Claude Code Hooks Documentation](https://docs.anthropic.com/en/docs/claude-code/hooks): Official reference for all hook types
+- [DESTRUCTIVE_GIT_COMMAND_CLAUDE_HOOKS_SETUP.md](https://github.com/Dicklesworthstone/post_compact_reminder/blob/main/DESTRUCTIVE_GIT_COMMAND_CLAUDE_HOOKS_SETUP.md): Block dangerous `git` and `rm` commands with a PreToolUse hook
 
 ---
 
